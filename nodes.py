@@ -201,6 +201,20 @@ def reclassify_ambiguous(state: EmailState) -> dict:
 
 
 
+def make_trash_node(gmail_client):
+    def trash_ai_delete(state: EmailState) -> dict:
+        delete_label_id = state["label_ids"]["AI-Delete"]
+        thread_ids = gmail_client.fetch_labeled_threads(delete_label_id)
+        print(f"  Trashing {len(thread_ids)} AI-Delete threads...")
+        for i, tid in enumerate(thread_ids):
+            gmail_client.trash_thread(tid)
+            if (i + 1) % 50 == 0:
+                print(f"  Trashed {i+1}/{len(thread_ids)} threads...")
+        print(f"  Done. Trashed {len(thread_ids)} AI-Delete threads.")
+        return {}
+    return trash_ai_delete
+
+
 # --- Router (used as conditional edge in graph.py) ---
 
 def route_after_classify(state: EmailState) -> str:

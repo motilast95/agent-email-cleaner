@@ -106,6 +106,25 @@ class GmailClient:
             return base64.urlsafe_b64decode(data).decode("utf-8", errors="ignore")
         return ""
 
+    def fetch_labeled_threads(self, label_id: str) -> list:
+        thread_ids = []
+        page_token = None
+        while True:
+            kwargs = {"userId": "me", "labelIds": [label_id], "maxResults": 500}
+            if page_token:
+                kwargs["pageToken"] = page_token
+            results = self.service.users().threads().list(**kwargs).execute()
+            thread_ids.extend(t["id"] for t in results.get("threads", []))
+            page_token = results.get("nextPageToken")
+            if not page_token:
+                break
+        return thread_ids
+
+    def trash_thread(self, thread_id: str) -> None:
+        import time
+        self.service.users().threads().trash(userId="me", id=thread_id).execute()
+        time.sleep(0.1)
+
     def batch_apply_label(self, thread_ids: list, label_id: str, remove_label_ids: list):
         import time
         for thread_id in thread_ids:

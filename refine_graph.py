@@ -18,7 +18,12 @@ from refine_nodes import (
 THREAD_ID = "refine-session-1"
 
 
-def build_refine_graph(gmail_client):
+def make_sqlite_checkpointer(db_path: str = "refine_state.db"):
+    conn = sqlite3.connect(db_path, check_same_thread=False)
+    return SqliteSaver(conn)
+
+
+def build_refine_graph(gmail_client, checkpointer=None):
     builder = StateGraph(RefineState)
 
     builder.add_node("fetch_keep_pile", make_fetch_keep_pile_node(gmail_client))
@@ -42,6 +47,4 @@ def build_refine_graph(gmail_client):
     )
     builder.add_edge("notify_done", END)
 
-    conn = sqlite3.connect("refine_state.db", check_same_thread=False)
-    checkpointer = SqliteSaver(conn)
     return builder.compile(checkpointer=checkpointer)

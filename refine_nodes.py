@@ -1,11 +1,11 @@
 import os
 import re
-from typing import TypedDict
+from typing import Literal, TypedDict
 
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
-from twilio.rest import Client
+from pydantic import BaseModel
 
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
@@ -14,10 +14,16 @@ class RefineState(TypedDict):
     keep_threads: list[dict]    # [{thread_id, sender, subject, snippet}]
     clusters: list[dict]        # [{domain, thread_ids, count, example_subjects}]
     current_idx: int            # index into clusters
-    current_question: str       # WhatsApp question text for the current cluster
+    current_question: str       # question text for the current cluster
     preference_profile: str     # accumulated preference rules, appended each round
     trash_queue: list[str]      # thread_ids confirmed for trash
     _reply: str                 # transient: reply from await_reply, read by process_reply
+
+
+class ProcessReplyOutput(BaseModel):
+    action: Literal["trash_all", "keep_all", "partial"]
+    rule: str                   # short preference rule to remember, or empty string
+    trash_ids: list[str]        # only populated for action=partial; ignored otherwise
 
 
 def make_fetch_keep_pile_node(gmail_client):
@@ -97,10 +103,15 @@ def cluster_ambiguous(state: RefineState) -> dict:
 
 
 def _send_whatsapp(message: str) -> None:
+    # Only sends if Twilio env vars are configured — skipped when using Agent Inbox
+    to = os.environ.get("TWILIO_WHATSAPP_TO", "")
+    if not to or to == "whatsapp:+1XXXXXXXXXX":
+        return
+    from twilio.rest import Client
     client = Client(os.environ["TWILIO_ACCOUNT_SID"], os.environ["TWILIO_AUTH_TOKEN"])
     client.messages.create(
         from_=os.environ["TWILIO_WHATSAPP_FROM"],
-        to=os.environ["TWILIO_WHATSAPP_TO"],
+        to=to,
         body=message,
     )
 
@@ -113,7 +124,7 @@ def build_and_send_question(state: RefineState) -> dict:
         if state["preference_profile"] else ""
     )
     prompt = (
-        f"Write a single WhatsApp question asking whether to trash emails from {cluster['domain']}. "
+        f"Write a single question asking whether to trash emails from {cluster['domain']}. "
         f"Count: {cluster['count']}. Example subjects: {'; '.join(cluster['example_subjects'])}.{profile_hint}\n\n"
         "Rules: plain text only, no markdown, no headers, no bullet points, no character counts, no notes. "
         "One sentence, under 160 chars. "
@@ -123,47 +134,57 @@ def build_and_send_question(state: RefineState) -> dict:
     _send_whatsapp(question)
     idx = state["current_idx"]
     total = len(state["clusters"])
-    print(f"  [{idx+1}/{total}] Sent question for {cluster['domain']}: {question}")
+    print(f"  [{idx+1}/{total}] Question for {cluster['domain']}: {question}")
     return {"current_question": question}
 
 
 def await_reply(state: RefineState) -> dict:
     cluster = state["clusters"][state["current_idx"]]
-    reply = interrupt({"question": state["current_question"], "domain": cluster["domain"]})
+    reply = interrupt({
+        "question": state["current_question"],
+        "domain": cluster["domain"],
+        "count": cluster["count"],
+        "example_subjects": cluster["example_subjects"],
+    })
     return {"_reply": reply}
 
 
 def process_reply(state: RefineState) -> dict:
     cluster = state["clusters"][state["current_idx"]]
     reply = state["_reply"]
-    llm = ChatAnthropic(model=HAIKU_MODEL, max_tokens=4096)
+    llm = ChatAnthropic(model=HAIKU_MODEL, max_tokens=1024).with_structured_output(ProcessReplyOutput)
 
+    profile_hint = (
+        f"\n\nKnown preferences so far:\n{state['preference_profile']}"
+        if state["preference_profile"] else ""
+    )
     prompt = (
         f"The user was asked: \"{state['current_question']}\"\n"
         f"They replied: \"{reply}\"\n\n"
-        f"Cluster: {cluster['count']} emails from {cluster['domain']}.\n\n"
-        "Return JSON with keys:\n"
-        "  action: 'trash_all' | 'keep_all' | 'partial'\n"
-        "  rule: short preference rule to remember (1 sentence, or '' if none)\n"
-        "  trash_ids: list of thread_ids to trash (all of them if trash_all, [] if keep_all, subset if partial)\n\n"
-        f"Available thread_ids: {cluster['thread_ids']}\n"
-        "Respond with only JSON, no markdown."
+        f"Cluster: {cluster['count']} emails from {cluster['domain']}.\n"
+        f"Available thread_ids: {cluster['thread_ids']}{profile_hint}\n\n"
+        "Determine the action:\n"
+        "- trash_all: user wants to trash all emails in this cluster\n"
+        "- keep_all: user wants to keep all emails in this cluster\n"
+        "- partial: user wants to trash some — populate trash_ids with the relevant subset\n\n"
+        "Also extract a short preference rule if the user expressed one (e.g. 'always keep emails from Goldman'). Leave rule empty if none."
     )
-    raw = llm.invoke([HumanMessage(content=prompt)]).content.strip()
+    result: ProcessReplyOutput = llm.invoke([HumanMessage(content=prompt)])
 
-    import json, re as _re
-    raw = _re.sub(r"^```(?:json)?\s*", "", raw)
-    raw = _re.sub(r"\s*```$", "", raw)
-    parsed = json.loads(raw)
+    # Resolve trash_ids from action — don't rely on LLM to enumerate all IDs for trash_all
+    if result.action == "trash_all":
+        new_trash = cluster["thread_ids"]
+    elif result.action == "keep_all":
+        new_trash = []
+    else:
+        new_trash = result.trash_ids
 
-    new_trash = parsed.get("trash_ids", [])
-    rule = parsed.get("rule", "").strip()
-
+    rule = result.rule.strip()
     profile = state["preference_profile"]
     if rule:
         profile = (profile + "\n" + rule).strip()
 
-    print(f"  Reply parsed: action={parsed.get('action')}, trashing {len(new_trash)} threads. Rule: {rule or '(none)'}")
+    print(f"  Reply parsed: action={result.action}, trashing {len(new_trash)} threads. Rule: {rule or '(none)'}")
     return {
         "trash_queue": state["trash_queue"] + new_trash,
         "preference_profile": profile,
@@ -187,9 +208,6 @@ def check_termination(state: RefineState) -> str:
 
 
 def notify_done(state: RefineState) -> dict:
-    total_trashed = sum(
-        c["count"] for c in state["clusters"]
-    )  # approximation; actual count was in trash_queue before clearing
     msg = f"Refinement complete! Reviewed {len(state['clusters'])} clusters. Check Gmail Trash for moved emails."
     _send_whatsapp(msg)
     print("  All clusters reviewed. Session complete.")

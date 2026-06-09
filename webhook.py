@@ -8,10 +8,11 @@ from fastapi import FastAPI, Form
 from langgraph.types import Command
 
 from gmail_client import GmailClient
-from refine_graph import build_refine_graph, THREAD_ID
+from refine_graph import build_refine_graph, make_sqlite_checkpointer, THREAD_ID
 
 app = FastAPI()
-graph = build_refine_graph(GmailClient())
+checkpointer = make_sqlite_checkpointer()
+graph = build_refine_graph(GmailClient(), checkpointer=checkpointer)
 
 
 @app.post("/twilio/reply")

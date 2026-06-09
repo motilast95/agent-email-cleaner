@@ -7,11 +7,12 @@ load_dotenv()
 from langgraph.errors import GraphInterrupt
 
 from gmail_client import GmailClient
-from refine_graph import build_refine_graph, THREAD_ID
+from refine_graph import build_refine_graph, make_sqlite_checkpointer, THREAD_ID
 from refine_nodes import RefineState
 
 gmail = GmailClient()
-graph = build_refine_graph(gmail)
+checkpointer = make_sqlite_checkpointer()
+graph = build_refine_graph(gmail, checkpointer=checkpointer)
 
 initial_state: RefineState = {
     "keep_threads": [],
@@ -28,4 +29,4 @@ print("Starting refinement session...")
 try:
     graph.invoke(initial_state, config=config)
 except GraphInterrupt:
-    print("Graph paused — waiting for your WhatsApp reply. Reply in WhatsApp to continue.")
+    print("Graph paused — waiting for reply. Use Agent Inbox or webhook to continue.")

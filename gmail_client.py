@@ -122,7 +122,14 @@ class GmailClient:
 
     def trash_thread(self, thread_id: str) -> None:
         import time
-        self.service.users().threads().trash(userId="me", id=thread_id).execute()
+        for attempt in range(3):
+            try:
+                self.service.users().threads().trash(userId="me", id=thread_id).execute()
+                break
+            except Exception as e:
+                if attempt == 2:
+                    print(f"Warning: failed to trash thread {thread_id}: {e}")
+                time.sleep(1.5 * (attempt + 1))
         time.sleep(0.1)
 
     def batch_apply_label(self, thread_ids: list, label_id: str, remove_label_ids: list):

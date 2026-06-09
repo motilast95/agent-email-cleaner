@@ -113,9 +113,11 @@ def build_and_send_question(state: RefineState) -> dict:
         if state["preference_profile"] else ""
     )
     prompt = (
-        f"Draft a short WhatsApp question (≤160 chars) asking whether to trash emails from {cluster['domain']}. "
-        f"Count: {cluster['count']}. Example subjects: {'; '.join(cluster['example_subjects'])}.{profile_hint} "
-        "Be direct, e.g. '23 emails from substack.com — trash all? (yes/no/partial rule)'"
+        f"Write a single WhatsApp question asking whether to trash emails from {cluster['domain']}. "
+        f"Count: {cluster['count']}. Example subjects: {'; '.join(cluster['example_subjects'])}.{profile_hint}\n\n"
+        "Rules: plain text only, no markdown, no headers, no bullet points, no character counts, no notes. "
+        "One sentence, under 160 chars. "
+        "Example output: 23 emails from substack.com — trash all? (yes/no/partial rule)"
     )
     question = llm.invoke([HumanMessage(content=prompt)]).content.strip()
     _send_whatsapp(question)
@@ -134,7 +136,7 @@ def await_reply(state: RefineState) -> dict:
 def process_reply(state: RefineState) -> dict:
     cluster = state["clusters"][state["current_idx"]]
     reply = state["_reply"]
-    llm = ChatAnthropic(model=HAIKU_MODEL, max_tokens=512)
+    llm = ChatAnthropic(model=HAIKU_MODEL, max_tokens=4096)
 
     prompt = (
         f"The user was asked: \"{state['current_question']}\"\n"

@@ -1,3 +1,5 @@
+import sqlite3
+
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 
@@ -40,5 +42,6 @@ def build_refine_graph(gmail_client):
     )
     builder.add_edge("notify_done", END)
 
-    checkpointer = SqliteSaver.from_conn_string("refine_state.db")
+    conn = sqlite3.connect("refine_state.db", check_same_thread=False)
+    checkpointer = SqliteSaver(conn)
     return builder.compile(checkpointer=checkpointer)

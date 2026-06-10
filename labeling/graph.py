@@ -1,5 +1,6 @@
 from langgraph.graph import StateGraph, END
-from nodes import (
+
+from labeling.nodes import (
     EmailState,
     make_fetch_node,
     make_fetch_bodies_node,

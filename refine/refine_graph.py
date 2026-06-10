@@ -1,25 +1,27 @@
 import sqlite3
 
-from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
+from langgraph.graph import END, StateGraph
 
-from refine_nodes import (
+from refine.refine_nodes import (
     RefineState,
-    make_fetch_keep_pile_node,
-    cluster_ambiguous,
-    build_and_send_question,
     await_reply,
-    process_reply,
-    make_trash_confirmed_node,
+    build_and_send_question,
     check_termination,
+    cluster_ambiguous,
+    make_fetch_keep_pile_node,
+    make_trash_confirmed_node,
     notify_done,
+    process_reply,
 )
+from shared.paths import PROJECT_ROOT
 
 THREAD_ID = "refine-session-1"
 
 
-def make_sqlite_checkpointer(db_path: str = "refine_state.db"):
-    conn = sqlite3.connect(db_path, check_same_thread=False)
+def make_sqlite_checkpointer(db_path: str | None = None):
+    path = db_path or str(PROJECT_ROOT / "refine_state.db")
+    conn = sqlite3.connect(path, check_same_thread=False)
     return SqliteSaver(conn)
 
 

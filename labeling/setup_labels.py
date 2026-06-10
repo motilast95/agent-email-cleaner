@@ -1,12 +1,16 @@
 """Run once to create Gmail labels and print their IDs."""
-from gmail_client import GmailClient
+from shared.gmail_client import GmailClient
 
 LABEL_NAMES = ["AI-Delete", "AI-Keep"]
+
 
 def main():
     gmail = GmailClient()
 
-    existing = {l["name"]: l["id"] for l in gmail.service.users().labels().list(userId="me").execute().get("labels", [])}
+    existing = {
+        l["name"]: l["id"]
+        for l in gmail.service.users().labels().list(userId="me").execute().get("labels", [])
+    }
 
     label_ids = {}
     for name in LABEL_NAMES:
@@ -21,11 +25,12 @@ def main():
             label_ids[name] = result["id"]
             print(f"Created — {name}: {result['id']}")
 
-    print("\nPaste this into main.py:")
+    print("\nPaste this into shared/labels.py:")
     print("LABEL_IDS = {")
     for name, lid in label_ids.items():
         print(f'    "{name}": "{lid}",')
     print("}")
+
 
 if __name__ == "__main__":
     main()

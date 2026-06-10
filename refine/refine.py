@@ -1,14 +1,16 @@
 import sys
+
 sys.stdout.reconfigure(line_buffering=True)
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from langgraph.errors import GraphInterrupt
 
-from gmail_client import GmailClient
-from refine_graph import build_refine_graph, make_sqlite_checkpointer, THREAD_ID
-from refine_nodes import RefineState
+from shared.gmail_client import GmailClient
+from refine.refine_graph import THREAD_ID, build_refine_graph, make_sqlite_checkpointer
+from refine.refine_nodes import RefineState
 
 gmail = GmailClient()
 checkpointer = make_sqlite_checkpointer()

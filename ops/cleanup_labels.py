@@ -1,7 +1,8 @@
-"""Remove all AI-* labels from emails that have more than one AI label applied."""
-from gmail_client import GmailClient
+"""Remove duplicate AI labels from emails that have more than one applied."""
+from shared.gmail_client import GmailClient
 
-AI_LABEL_NAMES = ["AI-Safe-Delete", "AI-Probably-Delete", "AI-Unsubscribe", "AI-Keep"]
+AI_LABEL_NAMES = ["AI-Delete", "AI-Keep"]
+
 
 def main():
     gmail = GmailClient()
@@ -24,7 +25,6 @@ def main():
                 ).execute()
                 applied = [l for l in detail.get("labelIds", []) if l in ai_label_ids]
                 if len(applied) > 1:
-                    # Keep the first one alphabetically as a tiebreak, remove the rest
                     keep = sorted(applied, key=lambda l: id_to_name[l])[0]
                     remove = [l for l in applied if l != keep]
                     gmail.service.users().messages().modify(
@@ -38,6 +38,7 @@ def main():
                 break
 
     print(f"\nDone. Fixed {fixed} emails with conflicting AI labels.")
+
 
 if __name__ == "__main__":
     main()

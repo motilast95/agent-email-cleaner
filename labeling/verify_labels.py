@@ -1,19 +1,14 @@
 """
 Diagnostic: fetch the last 50 inbox emails and print their actual Gmail labelIds.
-Tells us whether AI labels are genuinely applied or whether label chip visibility
-is purely a Gmail display issue.
 """
 from dotenv import load_dotenv
-from gmail_client import GmailClient
+
+from shared.gmail_client import GmailClient
+from shared.labels import LABEL_IDS
 
 load_dotenv()
 
-AI_LABEL_IDS = {
-    "Label_2": "AI-Safe-Delete",
-    "Label_3": "AI-Probably-Delete",
-    "Label_4": "AI-Unsubscribe",
-    "Label_5": "AI-Keep",
-}
+AI_LABEL_IDS = {v: k for k, v in LABEL_IDS.items()}
 
 
 def main():

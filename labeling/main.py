@@ -1,16 +1,14 @@
 import sys
+
 sys.stdout.reconfigure(line_buffering=True)
 
 from dotenv import load_dotenv
+
 load_dotenv()  # must run before langchain imports so tracing env vars are set
 
-from gmail_client import GmailClient
-from graph import build_graph
-
-LABEL_IDS = {
-    "AI-Delete": "Label_6",
-    "AI-Keep": "Label_5",
-}
+from shared.gmail_client import GmailClient
+from shared.labels import LABEL_IDS
+from labeling.graph import build_graph
 
 
 def main():

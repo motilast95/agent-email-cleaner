@@ -7,28 +7,30 @@ from langchain_core.messages import HumanMessage
 from langgraph.types import interrupt
 from pydantic import BaseModel
 
+from shared.labels import LABEL_IDS
+
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 
 
 class RefineState(TypedDict):
-    keep_threads: list[dict]    # [{thread_id, sender, subject, snippet}]
-    clusters: list[dict]        # [{domain, thread_ids, count, example_subjects}]
-    current_idx: int            # index into clusters
-    current_question: str       # question text for the current cluster
-    preference_profile: str     # accumulated preference rules, appended each round
-    trash_queue: list[str]      # thread_ids confirmed for trash
-    _reply: str                 # transient: reply from await_reply, read by process_reply
+    keep_threads: list[dict]
+    clusters: list[dict]
+    current_idx: int
+    current_question: str
+    preference_profile: str
+    trash_queue: list[str]
+    _reply: str
 
 
 class ProcessReplyOutput(BaseModel):
     action: Literal["trash_all", "keep_all", "partial"]
-    rule: str                   # short preference rule to remember, or empty string
-    trash_ids: list[str]        # only populated for action=partial; ignored otherwise
+    rule: str
+    trash_ids: list[str]
 
 
 def make_fetch_keep_pile_node(gmail_client):
     def fetch_keep_pile(state: RefineState) -> dict:
-        label_id = "Label_5"  # AI-Keep label ID (matches main.py LABEL_IDS)
+        label_id = LABEL_IDS["AI-Keep"]
         thread_ids = gmail_client.fetch_labeled_threads(label_id)
         print(f"Found {len(thread_ids)} AI-Keep threads. Fetching metadata...")
 
@@ -103,7 +105,6 @@ def cluster_ambiguous(state: RefineState) -> dict:
 
 
 def _send_whatsapp(message: str) -> None:
-    # Only sends if Twilio env vars are configured — skipped when using Agent Inbox
     to = os.environ.get("TWILIO_WHATSAPP_TO", "")
     if not to or to == "whatsapp:+1XXXXXXXXXX":
         return
@@ -171,7 +172,6 @@ def process_reply(state: RefineState) -> dict:
     )
     result: ProcessReplyOutput = llm.invoke([HumanMessage(content=prompt)])
 
-    # Resolve trash_ids from action — don't rely on LLM to enumerate all IDs for trash_all
     if result.action == "trash_all":
         new_trash = cluster["thread_ids"]
     elif result.action == "keep_all":

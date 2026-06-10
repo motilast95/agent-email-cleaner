@@ -13,18 +13,23 @@ fetch_metadata() does two steps internally:
 
 Safe to treat as black boxes for now: pagination (page_token), batch callbacks.
 
-Smoke test:
-  python -c "from gmail_client import GmailClient; g=GmailClient(); print(g.fetch_metadata(max_results=3))"
+Smoke test (from repo root):
+  py -c "from shared.gmail_client import GmailClient; g=GmailClient(); print(g.fetch_metadata(max_results=3))"
 """
 
-import os
 import base64
+import os
+
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from googleapiclient.discovery import build
 
+from shared.paths import PROJECT_ROOT
+
 SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
+TOKEN_FILE = PROJECT_ROOT / "token.json"
+CREDENTIALS_FILE = PROJECT_ROOT / "credentials.json"
 
 
 class GmailClient:
@@ -32,11 +37,11 @@ class GmailClient:
     Public methods (input → output → used by):
 
       GmailClient()           → logged-in client          → every script
-      fetch_metadata(n)       → [{id, thread_id, sender, subject, snippet}] → Phase 1 (main.py)
-      fetch_body(id)          → full text string          → Phase 1, low-confidence emails only
-      batch_apply_label(...)  → (writes to Gmail)         → Phase 1 end (nodes.py)
-      fetch_labeled_threads() → [thread_id, ...]          → Phase 2, trash_deletes.py
-      trash_thread(id)        → (moves to Gmail Trash)    → Phase 2, trash_deletes.py
+      fetch_metadata(n)       → [{id, thread_id, sender, subject, snippet}] → labeling module
+      fetch_body(id)          → full text string          → labeling, low-confidence only
+      batch_apply_label(...)  → (writes to Gmail)         → labeling end
+      fetch_labeled_threads() → [thread_id, ...]          → refine, ops
+      trash_thread(id)        → (moves to Gmail Trash)    → refine, ops
 
     Come back to this file when changing: inbox query, auth, labels, or trash — not Claude rules.
     """
@@ -47,24 +52,21 @@ class GmailClient:
     def _authenticate(self):
         """Load or refresh token.json; fall back to browser login. Returns Gmail API client."""
         creds = None
-        if os.path.exists("token.json"):  
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES) 
-        if not creds or not creds.valid: 
-            if creds and creds.expired and creds.refresh_token: 
-                creds.refresh(Request()) 
+        if TOKEN_FILE.exists():
+            creds = Credentials.from_authorized_user_file(str(TOKEN_FILE), SCOPES)
+        if not creds or not creds.valid:
+            if creds and creds.expired and creds.refresh_token:
+                creds.refresh(Request())
             else:
-                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES) 
-                creds = flow.run_local_server(port=0) 
-            with open("token.json", "w") as f: 
-                f.write(creds.to_json()) 
+                flow = InstalledAppFlow.from_client_secrets_file(str(CREDENTIALS_FILE), SCOPES)
+                creds = flow.run_local_server(port=0)
+            with open(TOKEN_FILE, "w") as f:
+                f.write(creds.to_json())
         return build("gmail", "v1", credentials=creds)
-
-
 
     def fetch_metadata(self, max_results=50):
         """Return metadata for unlabeled inbox emails (sender, subject, snippet — not full body)."""
         query = "in:inbox -label:AI-Keep -label:AI-Delete"  # Gmail search syntax; same as inbox search bar
-        # Step 1: collect all message IDs via paginated list calls (up to 500 per page)
         message_ids = []
         page_token = None
         while len(message_ids) < max_results:
@@ -84,7 +86,6 @@ class GmailClient:
         message_ids = message_ids[:max_results]
         print(f"Found {len(message_ids)} unlabeled emails to process. Fetching metadata...")
 
-        # Step 2: fetch metadata in batches of 100 using Gmail batch API
         emails = []
         BATCH_SIZE = 100
         for i in range(0, len(message_ids), BATCH_SIZE):

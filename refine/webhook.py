@@ -1,14 +1,16 @@
 import sys
+
 sys.stdout.reconfigure(line_buffering=True)
 
 from dotenv import load_dotenv
+
 load_dotenv()
 
 from fastapi import FastAPI, Form
 from langgraph.types import Command
 
-from gmail_client import GmailClient
-from refine_graph import build_refine_graph, make_sqlite_checkpointer, THREAD_ID
+from shared.gmail_client import GmailClient
+from refine.refine_graph import THREAD_ID, build_refine_graph, make_sqlite_checkpointer
 
 app = FastAPI()
 checkpointer = make_sqlite_checkpointer()

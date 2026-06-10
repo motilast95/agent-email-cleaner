@@ -1,28 +1,31 @@
 import json
-import os
 import re
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from pathlib import Path
 from typing import TypedDict
+
 from langchain_anthropic import ChatAnthropic
-from langchain_core.messages import SystemMessage, HumanMessage
-from prompts import (
-    SYSTEM_PROMPT,
+from langchain_core.messages import HumanMessage, SystemMessage
+
+from labeling.prompts import (
     BATCH_PROMPT_TEMPLATE,
-    RECLASSIFY_SYSTEM_PROMPT,
     RECLASSIFY_PROMPT_TEMPLATE,
+    RECLASSIFY_SYSTEM_PROMPT,
+    SYSTEM_PROMPT,
 )
+from shared.paths import PROJECT_ROOT
 
 BATCH_SIZE = 25
 HAIKU_MODEL = "claude-haiku-4-5-20251001"
 MAX_TOKENS = 8192
-CONTEXT_FILE = "context.md"
-CHECKPOINT_FILE = "classifications_cache.json"
+CONTEXT_FILE = Path(__file__).parent / "context.md"
+CHECKPOINT_FILE = PROJECT_ROOT / "classifications_cache.json"
 BODY_TRUNCATE = 2000
 
 
 def _load_context() -> str:
-    if os.path.exists(CONTEXT_FILE):
+    if CONTEXT_FILE.exists():
         with open(CONTEXT_FILE) as f:
             content = f.read().strip()
         if content:
@@ -35,7 +38,6 @@ def _parse_json(text: str) -> list:
     text = re.sub(r"^```(?:json)?\s*", "", text)
     text = re.sub(r"\s*```$", "", text)
     text = text.strip()
-    # Extract just the first complete JSON array, ignoring any trailing text
     start = text.find("[")
     if start == -1:
         return json.loads(text)
@@ -51,13 +53,11 @@ def _parse_json(text: str) -> list:
 
 
 class EmailState(TypedDict):
-    emails: list[dict]           # metadata for all fetched emails
-    classifications: list[dict]  # one entry per email, may include low-confidence
-    bodies: dict[str, str]       # email_id -> full body, only for ambiguous emails
-    label_ids: dict[str, str]    # label name -> Gmail label ID
+    emails: list[dict]
+    classifications: list[dict]
+    bodies: dict[str, str]
+    label_ids: dict[str, str]
 
-
-# --- Node factories (need gmail_client via closure) ---
 
 def make_fetch_node(gmail_client):
     def fetch_emails(state: EmailState) -> dict:
@@ -80,13 +80,12 @@ def make_fetch_bodies_node(gmail_client):
 
 def make_apply_labels_node(gmail_client):
     def apply_labels(state: EmailState) -> dict:
-        if os.path.exists(CHECKPOINT_FILE):
-            os.remove(CHECKPOINT_FILE)
+        if CHECKPOINT_FILE.exists():
+            CHECKPOINT_FILE.unlink()
 
         label_ids = state["label_ids"]
         all_ai_label_ids = list(label_ids.values())
 
-        # Group thread IDs by label so we can apply consistently across whole thread
         email_meta = {e["id"]: e for e in state["emails"]}
         groups: dict[str, list[str]] = {}
         for c in state["classifications"]:
@@ -105,8 +104,6 @@ def make_apply_labels_node(gmail_client):
     return apply_labels
 
 
-# --- Pure nodes (no gmail_client needed) ---
-
 MAX_WORKERS = 4
 
 
@@ -117,7 +114,7 @@ def classify_metadata(state: EmailState) -> dict:
 
     known_labels = {"AI-Delete", "AI-Keep"}
     cached: dict[str, dict] = {}
-    if os.path.exists(CHECKPOINT_FILE):
+    if CHECKPOINT_FILE.exists():
         with open(CHECKPOINT_FILE) as f:
             raw = json.load(f)
         cached = {c["id"]: c for c in raw if c.get("label") in known_labels}
@@ -199,23 +196,6 @@ def reclassify_ambiguous(state: EmailState) -> dict:
 
     return {"classifications": merged}
 
-
-
-def make_trash_node(gmail_client):
-    def trash_ai_delete(state: EmailState) -> dict:
-        delete_label_id = state["label_ids"]["AI-Delete"]
-        thread_ids = gmail_client.fetch_labeled_threads(delete_label_id)
-        print(f"  Trashing {len(thread_ids)} AI-Delete threads...")
-        for i, tid in enumerate(thread_ids):
-            gmail_client.trash_thread(tid)
-            if (i + 1) % 50 == 0:
-                print(f"  Trashed {i+1}/{len(thread_ids)} threads...")
-        print(f"  Done. Trashed {len(thread_ids)} AI-Delete threads.")
-        return {}
-    return trash_ai_delete
-
-
-# --- Router (used as conditional edge in graph.py) ---
 
 def route_after_classify(state: EmailState) -> str:
     ambiguous = [c for c in state["classifications"] if c.get("confidence") == "low"]

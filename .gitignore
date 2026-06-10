@@ -3,3 +3,6 @@ credentials.json
 token.json
 __pycache__/
 *.pyc
+.langgraph_api/
+classifications_cache.json
+*.db

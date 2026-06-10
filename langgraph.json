@@ -2,5 +2,6 @@
   "dependencies": ["."],
   "graphs": {
     "refine": "./refine/agent.py:graph"
-  }
+  },
+  "env": ".env"
 }

@@ -12,7 +12,8 @@ from labeling.graph import build_graph
 
 
 def main():
-    gmail = GmailClient()
+    
+    gmail = GmailClient() 
     graph = build_graph(gmail)
 
     initial_state = {

@@ -1,3 +1,22 @@
+"""
+Gmail adapter — talks to Gmail API only. No AI logic here.
+
+Login files (both gitignored, live in project root):
+  credentials.json  — app identity from Google Cloud Console
+  token.json        — your personal session (created on first browser login)
+
+After GmailClient() runs, self.service is the Gmail API client used for all calls.
+
+fetch_metadata() does two steps internally:
+  Step 1 — search inbox (list API) → message IDs only
+  Step 2 — batch-fetch From/Subject/snippet per ID (get API) → email dicts
+
+Safe to treat as black boxes for now: pagination (page_token), batch callbacks.
+
+Smoke test:
+  python -c "from gmail_client import GmailClient; g=GmailClient(); print(g.fetch_metadata(max_results=3))"
+"""
+
 import os
 import base64
 from google.auth.transport.requests import Request
@@ -9,26 +28,42 @@ SCOPES = ["https://www.googleapis.com/auth/gmail.modify"]
 
 
 class GmailClient:
+    """
+    Public methods (input → output → used by):
+
+      GmailClient()           → logged-in client          → every script
+      fetch_metadata(n)       → [{id, thread_id, sender, subject, snippet}] → Phase 1 (main.py)
+      fetch_body(id)          → full text string          → Phase 1, low-confidence emails only
+      batch_apply_label(...)  → (writes to Gmail)         → Phase 1 end (nodes.py)
+      fetch_labeled_threads() → [thread_id, ...]          → Phase 2, trash_deletes.py
+      trash_thread(id)        → (moves to Gmail Trash)    → Phase 2, trash_deletes.py
+
+    Come back to this file when changing: inbox query, auth, labels, or trash — not Claude rules.
+    """
+
     def __init__(self):
         self.service = self._authenticate()
 
     def _authenticate(self):
+        """Load or refresh token.json; fall back to browser login. Returns Gmail API client."""
         creds = None
-        if os.path.exists("token.json"):
-            creds = Credentials.from_authorized_user_file("token.json", SCOPES)
-        if not creds or not creds.valid:
-            if creds and creds.expired and creds.refresh_token:
-                creds.refresh(Request())
+        if os.path.exists("token.json"):  
+            creds = Credentials.from_authorized_user_file("token.json", SCOPES) 
+        if not creds or not creds.valid: 
+            if creds and creds.expired and creds.refresh_token: 
+                creds.refresh(Request()) 
             else:
-                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES)
-                creds = flow.run_local_server(port=0)
-            with open("token.json", "w") as f:
-                f.write(creds.to_json())
+                flow = InstalledAppFlow.from_client_secrets_file("credentials.json", SCOPES) 
+                creds = flow.run_local_server(port=0) 
+            with open("token.json", "w") as f: 
+                f.write(creds.to_json()) 
         return build("gmail", "v1", credentials=creds)
 
-    def fetch_metadata(self, max_results=50):
-        query = "in:inbox -label:AI-Keep -label:AI-Delete -label:AI-Safe-Delete -label:AI-Probably-Delete -label:AI-Unsubscribe"
 
+
+    def fetch_metadata(self, max_results=50):
+        """Return metadata for unlabeled inbox emails (sender, subject, snippet — not full body)."""
+        query = "in:inbox -label:AI-Keep -label:AI-Delete"  # Gmail search syntax; same as inbox search bar
         # Step 1: collect all message IDs via paginated list calls (up to 500 per page)
         message_ids = []
         page_token = None
@@ -90,6 +125,7 @@ class GmailClient:
         return emails
 
     def fetch_body(self, email_id):
+        """Return plain-text body for one message (used when metadata-only classification is uncertain)."""
         detail = self.service.users().messages().get(
             userId="me", id=email_id, format="full"
         ).execute()
@@ -107,6 +143,7 @@ class GmailClient:
         return ""
 
     def fetch_labeled_threads(self, label_id: str) -> list:
+        """Return all thread IDs that have the given Gmail label ID."""
         thread_ids = []
         page_token = None
         while True:
@@ -121,6 +158,7 @@ class GmailClient:
         return thread_ids
 
     def trash_thread(self, thread_id: str) -> None:
+        """Move one thread to Gmail Trash (recoverable ~30 days)."""
         import time
         for attempt in range(3):
             try:
@@ -133,6 +171,7 @@ class GmailClient:
         time.sleep(0.1)
 
     def batch_apply_label(self, thread_ids: list, label_id: str, remove_label_ids: list):
+        """Add one label to threads and remove conflicting AI labels."""
         import time
         for thread_id in thread_ids:
             for attempt in range(3):
